@@ -1,19 +1,19 @@
-# 🚗 ParkEasy — Smart Vehicle Parking Management System
+# ParkEasy — Smart Vehicle Parking Management System
 
 ParkEasy is a full-stack web application designed to simplify the management of vehicle parking facilities. It provides separate dashboards for administrators and users, enabling efficient parking slot management, booking, and monitoring.
 
 ---
 
-## 🌟 Features
+## Features
 
-### 👤 User Features
+### User Features
 
 * User Registration & Login (JWT Authentication)
 * View available parking lots
 * Book parking slots (future scope)
 * View booking history (future scope)
 
-### 👑 Admin Features
+### Admin Features
 
 * Admin Dashboard
 * Manage parking lots
@@ -22,7 +22,7 @@ ParkEasy is a full-stack web application designed to simplify the management of 
 
 ---
 
-## 🔐 Authentication
+## Authentication
 
 * Secure login system using **JWT (JSON Web Tokens)**
 * Passwords stored securely using **bcrypt hashing**
@@ -30,7 +30,7 @@ ParkEasy is a full-stack web application designed to simplify the management of 
 
 ---
 
-## 🛠️ Tech Stack
+## Tech Stack
 
 ### Frontend
 
