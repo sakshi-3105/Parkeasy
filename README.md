@@ -1,6 +1,6 @@
 # ParkEasy — Smart Vehicle Parking Management System
 
-ParkEasy is a full-stack web application designed to simplify the management of vehicle parking facilities. It provides separate dashboards for administrators and users, enabling efficient parking slot management, booking, and monitoring.
+ParkEasy is a full-stack web application designed to simplify the management of vehicle parking facilities. It provides separate dashboards for administrators and users, enabling efficient parking slot management, booking, and secure payments.
 
 ---
 
@@ -10,8 +10,9 @@ ParkEasy is a full-stack web application designed to simplify the management of 
 
 * User Registration & Login (JWT Authentication)
 * View available parking lots
-* Book parking slots (future scope)
-* View booking history (future scope)
+* Book parking slots 
+* Secure online payments using Razorpay
+* View booking history 
 
 ### Admin Features
 
@@ -48,6 +49,10 @@ ParkEasy is a full-stack web application designed to simplify the management of 
 ### ORM
 
 * Prisma
+
+### Payments
+
+* Razorpay
 
 ### Deployment
 
