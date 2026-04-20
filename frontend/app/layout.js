@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata = {
-  title: "ParkEasy Pune",
+  title: "ParkEasy",
   description: "Smart Parking Management System",
 };
 

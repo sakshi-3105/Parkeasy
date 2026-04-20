@@ -84,25 +84,71 @@ router.put('/checkout-confirm/:reserve_id', async (req, res) => {
     await client.query('BEGIN');
 
     const data = await client.query("SELECT spot_id FROM reservations WHERE reserve_id = $1", [reserve_id]);
+    if (data.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: "Reservation not found" });
+    }
     const spotId = data.rows[0].spot_id;
 
     // 1. Free the spot
     await client.query("UPDATE spots SET status = 'a' WHERE spot_id = $1", [spotId]);
     
     // 2. End the reservation
-    await client.query("UPDATE reservations SET end_time = NOW(), is_ongoing = false WHERE reserve_id = $2", [reserve_id]);
+    await client.query("UPDATE reservations SET end_time = NOW(), is_ongoing = false WHERE reserve_id = $1", [reserve_id]);
     
     // 3. Record the payment for Admin Dashboard
+    // Handle slight schema variations across setups.
+    const paymentColsRes = await client.query(
+      "SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'payments'"
+    );
+    const paymentCols = paymentColsRes.rows.map((r) => r.column_name);
+    const paymentColsByName = Object.fromEntries(
+      paymentColsRes.rows.map((r) => [r.column_name, r.data_type])
+    );
+
+    const amountCol = paymentCols.includes('total_amt')
+      ? 'total_amt'
+      : (paymentCols.includes('amount') ? 'amount' : null);
+    const methodCol = paymentCols.includes('payment_method')
+      ? 'payment_method'
+      : (paymentCols.includes('method') ? 'method' : null);
+    const textLikeTypes = ['text', 'character varying', 'character'];
+    const preferredTxnCols = ['razorpay_payment_id', 'transaction_id', 'payment_id'];
+    const txnIdCol = preferredTxnCols.find((col) =>
+      paymentCols.includes(col) && textLikeTypes.includes(paymentColsByName[col])
+    ) || null;
+
+    if (!paymentCols.includes('reserve_id') || !amountCol) {
+      throw new Error("Payments table schema mismatch: required columns not found.");
+    }
+
+    const insertColumns = ['reserve_id', amountCol];
+    const insertValues = [reserve_id, amount];
+
+    if (methodCol) {
+      insertColumns.push(methodCol);
+      insertValues.push('Razorpay');
+    }
+    if (txnIdCol) {
+      insertColumns.push(txnIdCol);
+      insertValues.push(payment_id);
+    }
+
+    const placeholders = insertColumns.map((_, idx) => `$${idx + 1}`).join(', ');
     await client.query(
-      "INSERT INTO payments (reserve_id, total_amt, payment_method, razorpay_payment_id) VALUES ($1, $2, $3, $4)", 
-      [reserve_id, amount, 'Razorpay', payment_id]
+      `INSERT INTO payments (${insertColumns.join(', ')}) VALUES (${placeholders})`,
+      insertValues
     );
 
     await client.query('COMMIT');
     res.json({ message: "Checkout complete" });
   } catch (err) {
     await client.query('ROLLBACK');
-    res.status(500).send("Server Error");
+    console.error("Checkout confirm error:", err);
+    res.status(500).json({
+      error: "Checkout confirmation failed",
+      details: err.message
+    });
   } finally { client.release(); }
 });
 
