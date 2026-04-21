@@ -85,7 +85,7 @@ export default function LandingPage() {
       <main className="max-w-7xl mx-auto px-8 py-24 flex flex-col items-center text-center relative z-10">
         <div className="hero-badge inline-flex items-center gap-2 px-4 py-2 mb-8 text-xs font-bold tracking-widest text-blue-700 uppercase bg-blue-50 border border-blue-200 rounded-full backdrop-blur-sm">
           <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse"></span>
-          Parking Simplified for Pune
+          Parking Simplified
         </div>
         
         <h2 className="text-5xl md:text-7xl lg:text-8xl font-black text-gray-900 mb-8 leading-[1.1] tracking-tight [perspective:1000px]">
@@ -142,7 +142,7 @@ export default function LandingPage() {
       {/* Footer */}
       <footer className="relative z-10 border-t border-gray-200 mt-10 py-8">
         <div className="max-w-7xl mx-auto px-8 flex justify-center items-center text-gray-500 text-sm">
-          <p>© 2026 ParkEasy Pune. All rights reserved.</p>
+          <p>© 2026 ParkEasy. All rights reserved.</p>
         </div>
       </footer>
     </div>

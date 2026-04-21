@@ -25,6 +25,13 @@ export default function Login() {
       {/* Background decoration */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-400/20 blur-[120px] rounded-full pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-indigo-400/20 blur-[120px] rounded-full pointer-events-none"></div>
+      <a
+        href="/"
+        className="absolute top-6 left-4 sm:left-6 z-20 inline-flex items-center gap-2 text-sm font-bold text-gray-600 hover:text-blue-600 transition-colors"
+      >
+        <span aria-hidden="true">←</span>
+        <span>Back to Home</span>
+      </a>
       
       <form onSubmit={handleLogin} className="relative z-10 bg-white/80 backdrop-blur-md border border-white p-6 sm:p-10 rounded-[2rem] shadow-xl shadow-blue-900/5 w-full max-w-[420px] transition-all duration-300 hover:bg-white hover:shadow-2xl hover:shadow-blue-900/10 hover:-translate-y-1">
         <div className="text-center mb-10">

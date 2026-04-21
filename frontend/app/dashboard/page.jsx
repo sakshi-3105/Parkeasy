@@ -15,6 +15,12 @@ export default function UserDashboard() {
   const [selectedLot, setSelectedLot] = useState(null); // The lot user clicked on
   const [lotSpots, setLotSpots] = useState([]); // The spots inside that lot
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [pendingSpotId, setPendingSpotId] = useState(null);
+  const [showVehicleModal, setShowVehicleModal] = useState(false);
+  const [vehicleNumInput, setVehicleNumInput] = useState('');
+  const [vehicleError, setVehicleError] = useState('');
+  const [feedback, setFeedback] = useState({ open: false, message: '', type: 'info' });
+  const [paymentToast, setPaymentToast] = useState({ open: false, message: '' });
 
   const router = useRouter();
 
@@ -52,30 +58,48 @@ export default function UserDashboard() {
       const response = await axios.get(`http://localhost:3001/api/user/lots/${lot.lot_id}/spots`);
       setLotSpots(response.data);
     } catch (err) {
-      alert("Could not load spots for this lot.");
+      setFeedback({ open: true, message: "Could not load spots for this lot.", type: 'error' });
     }
   };
 
-  const handleFinalBooking = async (spotId) => {
-    const vehicleNum = prompt("Confirm Vehicle Number:");
-    if (!vehicleNum) return;
-  
+  const vehicleRegex = /^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{1,4}$/;
+
+  const openVehicleModal = (spotId) => {
+    setPendingSpotId(spotId);
+    setVehicleNumInput('');
+    setVehicleError('');
+    setShowVehicleModal(true);
+  };
+
+  const handleFinalBooking = async () => {
+    const normalizedVehicleNum = vehicleNumInput.trim().toUpperCase().replace(/\s+/g, '');
+    if (!normalizedVehicleNum) {
+      setVehicleError('Vehicle number is required.');
+      return;
+    }
+    if (!vehicleRegex.test(normalizedVehicleNum)) {
+      setVehicleError('Enter a valid vehicle number (e.g., MH12AB1234).');
+      return;
+    }
+    if (!pendingSpotId) return;
+
     const user = JSON.parse(localStorage.getItem('user'));
   
     try {
       await axios.post('http://localhost:3001/api/user/book', {
         user_id: user.user_id,
         lot_id: selectedLot.lot_id,
-        vehicle_num: vehicleNum,
-        spot_id: spotId // Sending the specific spot chosen
+        vehicle_num: normalizedVehicleNum,
+        spot_id: pendingSpotId // Sending the specific spot chosen
       });
       
-      alert("Booking confirmed!");
       setIsModalOpen(false);
+      setShowVehicleModal(false);
+      setPendingSpotId(null);
       fetchLots();
       fetchUserBookings(user.user_id);
     } catch (err) {
-      alert(err.response?.data?.error || "Booking failed");
+      setFeedback({ open: true, message: err.response?.data?.error || "Booking failed", type: 'error' });
     }
   };
 
@@ -89,7 +113,7 @@ export default function UserDashboard() {
       });
       
       if (!window.Razorpay) {
-        alert("Razorpay SDK is still loading. Please wait a second and try again.");
+        setFeedback({ open: true, message: "Razorpay SDK is still loading. Please wait a second and try again.", type: 'error' });
         return;
       }
   
@@ -107,14 +131,20 @@ export default function UserDashboard() {
               amount: total_amt 
             });
             
-            alert(`Payment Successful! Transaction ID: ${response.razorpay_payment_id}`);
+            setPaymentToast({
+              open: true,
+              message: `Payment Successful! Transaction ID: ${response.razorpay_payment_id}`
+            });
+            setTimeout(() => {
+              setPaymentToast({ open: false, message: '' });
+            }, 4000);
             
             const user = JSON.parse(localStorage.getItem('user'));
             fetchLots();
             fetchUserBookings(user.user_id);
           } catch (err) {
             console.error("Confirmation Error:", err);
-            alert("Payment was successful, but your session is still active in our system. Please contact the Admin.");
+            setFeedback({ open: true, message: "Payment was successful, but your session is still active in our system. Please contact the Admin.", type: 'error' });
           }
         },
         prefill: {
@@ -134,14 +164,14 @@ export default function UserDashboard() {
       const rzp = new window.Razorpay(options);
       
       rzp.on('payment.failed', function (response) {
-        alert(`Payment Failed: ${response.error.description}`);
+        setFeedback({ open: true, message: `Payment Failed: ${response.error.description}`, type: 'error' });
       });
   
       rzp.open();
       
     } catch (err) {
       console.error("Checkout Error:", err);
-      alert(err.response?.data?.error || "Unable to initiate checkout. Please try again.");
+      setFeedback({ open: true, message: err.response?.data?.error || "Unable to initiate checkout. Please try again.", type: 'error' });
     }
   };
 
@@ -154,6 +184,23 @@ export default function UserDashboard() {
     <div className="min-h-screen bg-[#f8fafc] text-gray-900 pb-20 relative font-sans selection:bg-blue-600 selection:text-white transition-colors duration-300">
       {/* Decorative background blurs using same color tokens */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-300/20 blur-[120px] rounded-full pointer-events-none"></div>
+      {paymentToast.open && (
+        <div className="fixed top-4 right-4 sm:top-6 sm:right-6 z-[70] max-w-sm w-[calc(100%-2rem)] sm:w-full bg-white border border-green-200 shadow-xl rounded-2xl p-4">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 w-2.5 h-2.5 rounded-full bg-green-500"></div>
+            <div className="flex-1">
+              <p className="text-xs font-bold uppercase tracking-wider text-green-700">Payment Successful</p>
+              <p className="text-sm font-semibold text-gray-800 mt-1 break-words">{paymentToast.message}</p>
+            </div>
+            <button
+              onClick={() => setPaymentToast({ open: false, message: '' })}
+              className="text-gray-400 hover:text-gray-700 text-sm font-bold"
+            >
+              x
+            </button>
+          </div>
+        </div>
+      )}
       
       <nav className="bg-white/80 backdrop-blur-xl border-b border-gray-200 px-4 sm:px-8 py-4 flex justify-between items-center sticky top-0 z-40 transition-all shadow-sm">
         <div className="flex items-center gap-2 sm:gap-3">
@@ -168,6 +215,26 @@ export default function UserDashboard() {
       </nav>
 
       <main className="max-w-7xl mx-auto p-4 sm:p-8 relative z-10">
+        {feedback.open && (
+          <div className={`mb-6 sm:mb-8 rounded-2xl border px-4 sm:px-5 py-3 sm:py-4 text-sm sm:text-base font-semibold ${
+            feedback.type === 'success'
+              ? 'bg-green-50 border-green-200 text-green-800'
+              : feedback.type === 'error'
+              ? 'bg-red-50 border-red-200 text-red-700'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}>
+            <div className="flex items-start justify-between gap-4">
+              <p>{feedback.message}</p>
+              <button
+                onClick={() => setFeedback((prev) => ({ ...prev, open: false }))}
+                className="text-xs sm:text-sm font-bold px-2 py-1 rounded-lg bg-white/70 border border-current/20 hover:bg-white"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Active Bookings Section */}
         {bookings.length > 0 && (
           <section className="mb-10 sm:mb-14">
@@ -261,7 +328,7 @@ export default function UserDashboard() {
                 <button
                   key={spot.spot_id}
                   disabled={spot.status === 'o'}
-                  onClick={() => handleFinalBooking(spot.spot_id)}
+                  onClick={() => openVehicleModal(spot.spot_id)}
                   className={`aspect-square rounded-xl sm:rounded-2xl flex flex-col items-center justify-center border transition-all transform active:scale-95 group ${
                     spot.status === 'a' 
                     ? 'border-green-200 bg-green-50/50 hover:bg-green-500 hover:border-green-600 hover:text-white hover:shadow-[0_4px_14px_0_rgba(34,197,94,0.39)] cursor-pointer' 
@@ -283,6 +350,60 @@ export default function UserDashboard() {
               <div className="flex items-center gap-2 sm:gap-3">
                 <div className="w-3 h-3 sm:w-4 sm:h-4 bg-gray-50 border border-gray-200 rounded-md"></div> Occupied
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVehicleModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl sm:rounded-[2rem] p-5 sm:p-8 max-w-md w-full shadow-2xl border border-gray-100">
+            <div className="flex justify-between items-start mb-5 border-b border-gray-100 pb-4">
+              <div>
+                <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900">Confirm Vehicle</h2>
+                <p className="text-gray-500 text-xs sm:text-sm mt-1">Enter vehicle number to continue booking.</p>
+              </div>
+              <button
+                onClick={() => { setShowVehicleModal(false); setVehicleError(''); }}
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gray-50 hover:bg-gray-100 text-gray-500 hover:text-gray-900 flex items-center justify-center transition-colors border border-gray-200"
+              >
+                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+              </button>
+            </div>
+
+            <label htmlFor="vehicle-num" className="block text-xs sm:text-sm font-bold text-gray-700 mb-2">
+              Vehicle Number
+            </label>
+            <input
+              id="vehicle-num"
+              type="text"
+              value={vehicleNumInput}
+              onChange={(e) => {
+                setVehicleNumInput(e.target.value.toUpperCase());
+                if (vehicleError) setVehicleError('');
+              }}
+              placeholder="e.g., MH12AB1234"
+              className={`w-full px-4 py-3 bg-gray-50 border rounded-xl outline-none focus:ring-1 text-sm sm:text-base font-semibold tracking-wide ${
+                vehicleError
+                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
+                  : 'border-gray-200 focus:border-blue-500 focus:ring-blue-500'
+              }`}
+            />
+            {vehicleError && <p className="mt-2 text-xs sm:text-sm font-medium text-red-600">{vehicleError}</p>}
+
+            <div className="mt-5 flex gap-3">
+              <button
+                onClick={() => { setShowVehicleModal(false); setVehicleError(''); }}
+                className="w-full bg-white border border-gray-200 text-gray-700 px-4 py-2.5 rounded-xl font-bold transition-all hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFinalBooking}
+                className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold transition-all hover:bg-blue-700"
+              >
+                Confirm Booking
+              </button>
             </div>
           </div>
         </div>
