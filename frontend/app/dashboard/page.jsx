@@ -1,9 +1,11 @@
 "use client";
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
 import { useRouter } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function UserDashboard() {
+  // --- Data States ---
   const [lots, setLots] = useState([]);
   const [bookings, setBookings] = useState([]); 
   const [userName, setUserName] = useState('');
@@ -11,19 +13,27 @@ export default function UserDashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [showShadedOnly, setShowShadedOnly] = useState(false);
 
-  // Path 2 States: Spot Selection Modal
-  const [selectedLot, setSelectedLot] = useState(null); // The lot user clicked on
-  const [lotSpots, setLotSpots] = useState([]); // The spots inside that lot
+  // --- Modal & Selection States ---
+  const [selectedLot, setSelectedLot] = useState(null);
+  const [lotSpots, setLotSpots] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [pendingSpotId, setPendingSpotId] = useState(null);
   const [showVehicleModal, setShowVehicleModal] = useState(false);
   const [vehicleNumInput, setVehicleNumInput] = useState('');
   const [vehicleError, setVehicleError] = useState('');
+  
+  // --- QR & Success States ---
+  const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [qrData, setQrData] = useState("");
+  const qrRef = useRef(null);
+
+  // --- UI Feedback States ---
   const [feedback, setFeedback] = useState({ open: false, message: '', type: 'info' });
   const [paymentToast, setPaymentToast] = useState({ open: false, message: '' });
 
   const router = useRouter();
 
+  // --- Initialization ---
   useEffect(() => {
     const storedUser = JSON.parse(localStorage.getItem('user'));
     const token = localStorage.getItem('token');
@@ -51,14 +61,16 @@ export default function UserDashboard() {
     } catch (err) { console.error("Error fetching bookings"); }
   };
 
+  // --- Booking Logic ---
   const openBookingModal = async (lot) => {
     setSelectedLot(lot);
     setIsModalOpen(true);
+    setBookingSuccess(false); 
     try {
       const response = await axios.get(`http://localhost:3001/api/user/lots/${lot.lot_id}/spots`);
       setLotSpots(response.data);
     } catch (err) {
-      setFeedback({ open: true, message: "Could not load spots for this lot.", type: 'error' });
+      setFeedback({ open: true, message: "Could not load spots.", type: 'error' });
     }
   };
 
@@ -81,7 +93,6 @@ export default function UserDashboard() {
       setVehicleError('Enter a valid vehicle number (e.g., MH12AB1234).');
       return;
     }
-    if (!pendingSpotId) return;
 
     const user = JSON.parse(localStorage.getItem('user'));
   
@@ -90,12 +101,14 @@ export default function UserDashboard() {
         user_id: user.user_id,
         lot_id: selectedLot.lot_id,
         vehicle_num: normalizedVehicleNum,
-        spot_id: pendingSpotId // Sending the specific spot chosen
+        spot_id: pendingSpotId
       });
       
-      setIsModalOpen(false);
+      const uniqueData = `PARKEASY|${normalizedVehicleNum}|LOT:${selectedLot.lot_id}|SPOT:${pendingSpotId}|${Date.now()}`;
+      setQrData(uniqueData);
+      
       setShowVehicleModal(false);
-      setPendingSpotId(null);
+      setBookingSuccess(true); 
       fetchLots();
       fetchUserBookings(user.user_id);
     } catch (err) {
@@ -103,17 +116,64 @@ export default function UserDashboard() {
     }
   };
 
+  // --- QR Ticket Download Logic ---
+  const downloadTicket = () => {
+    const svg = qrRef.current.querySelector("svg");
+    const svgData = new XMLSerializer().serializeToString(svg);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    
+    img.onload = () => {
+      canvas.width = 300;
+      canvas.height = 450;
+      
+      // Draw Ticket Background
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw Header
+      ctx.fillStyle = "#2563eb";
+      ctx.fillRect(0, 0, canvas.width, 60);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 20px Arial";
+      ctx.textAlign = "center";
+      ctx.fillText("PARKEASY TICKET", canvas.width / 2, 40);
+
+      // Draw QR Code
+      ctx.drawImage(img, 50, 80, 200, 200);
+
+      // Draw Details
+      ctx.fillStyle = "#1e293b";
+      ctx.font = "bold 16px Arial";
+      ctx.fillText(`VEHICLE: ${vehicleNumInput}`, canvas.width / 2, 320);
+      
+      ctx.font = "14px Arial";
+      ctx.fillStyle = "#64748b";
+      ctx.fillText(selectedLot?.prime_loc, canvas.width / 2, 350);
+      
+      ctx.font = "italic 12px Arial";
+      ctx.fillText("Valid for one-time entry", canvas.width / 2, 400);
+
+      const pngFile = canvas.toDataURL("image/png");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = `ParkEasy_${vehicleNumInput}.png`;
+      downloadLink.href = pngFile;
+      downloadLink.click();
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(svgData);
+  };
+
+  // --- Checkout & Payment Logic ---
   const handleCheckout = async (reserve_id) => {
     try {
       const billRes = await axios.put(`http://localhost:3001/api/user/checkout-calc/${reserve_id}`);
       const { total_amt } = billRes.data;
   
-      const orderRes = await axios.post('http://localhost:3001/api/user/create-order', { 
-        amount: total_amt 
-      });
+      const orderRes = await axios.post('http://localhost:3001/api/user/create-order', { amount: total_amt });
       
       if (!window.Razorpay) {
-        setFeedback({ open: true, message: "Razorpay SDK is still loading. Please wait a second and try again.", type: 'error' });
+        setFeedback({ open: true, message: "Razorpay SDK failed to load.", type: 'error' });
         return;
       }
   
@@ -122,7 +182,6 @@ export default function UserDashboard() {
         amount: orderRes.data.amount,    
         currency: "INR",
         name: "ParkEasy Pune",
-        description: "Parking Session Checkout",
         order_id: orderRes.data.id,      
         handler: async function (response) {
           try {
@@ -130,48 +189,22 @@ export default function UserDashboard() {
               payment_id: response.razorpay_payment_id,
               amount: total_amt 
             });
-            
-            setPaymentToast({
-              open: true,
-              message: `Payment Successful! Transaction ID: ${response.razorpay_payment_id}`
-            });
-            setTimeout(() => {
-              setPaymentToast({ open: false, message: '' });
-            }, 4000);
-            
-            const user = JSON.parse(localStorage.getItem('user'));
+            setPaymentToast({ open: true, message: `Payment Successful! ID: ${response.razorpay_payment_id}` });
+            setTimeout(() => setPaymentToast({ open: false, message: '' }), 4000);
             fetchLots();
-            fetchUserBookings(user.user_id);
+            fetchUserBookings(JSON.parse(localStorage.getItem('user')).user_id);
           } catch (err) {
-            console.error("Confirmation Error:", err);
-            setFeedback({ open: true, message: "Payment was successful, but your session is still active in our system. Please contact the Admin.", type: 'error' });
+            setFeedback({ open: true, message: "Critical session update error.", type: 'error' });
           }
         },
-        prefill: {
-          name: userName,
-          email: JSON.parse(localStorage.getItem('user'))?.email || "",
-        },
-        theme: { 
-          color: "#2563eb"
-        },
-        modal: {
-          ondismiss: function() {
-            console.log("Checkout modal closed by user");
-          }
-        }
+        prefill: { name: userName, email: JSON.parse(localStorage.getItem('user'))?.email || "" },
+        theme: { color: "#2563eb" }
       };
   
       const rzp = new window.Razorpay(options);
-      
-      rzp.on('payment.failed', function (response) {
-        setFeedback({ open: true, message: `Payment Failed: ${response.error.description}`, type: 'error' });
-      });
-  
       rzp.open();
-      
     } catch (err) {
-      console.error("Checkout Error:", err);
-      setFeedback({ open: true, message: err.response?.data?.error || "Unable to initiate checkout. Please try again.", type: 'error' });
+      setFeedback({ open: true, message: "Checkout failed.", type: 'error' });
     }
   };
 
@@ -181,81 +214,45 @@ export default function UserDashboard() {
   });
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] text-gray-900 pb-20 relative font-sans selection:bg-blue-600 selection:text-white transition-colors duration-300">
-      {/* Decorative background blurs using same color tokens */}
+    <div className="min-h-screen bg-[#f8fafc] text-gray-900 pb-20 relative font-sans">
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-blue-300/20 blur-[120px] rounded-full pointer-events-none"></div>
+      
+      {/* Payment Toast */}
       {paymentToast.open && (
-        <div className="fixed top-4 right-4 sm:top-6 sm:right-6 z-[70] max-w-sm w-[calc(100%-2rem)] sm:w-full bg-white border border-green-200 shadow-xl rounded-2xl p-4">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 w-2.5 h-2.5 rounded-full bg-green-500"></div>
-            <div className="flex-1">
-              <p className="text-xs font-bold uppercase tracking-wider text-green-700">Payment Successful</p>
-              <p className="text-sm font-semibold text-gray-800 mt-1 break-words">{paymentToast.message}</p>
-            </div>
-            <button
-              onClick={() => setPaymentToast({ open: false, message: '' })}
-              className="text-gray-400 hover:text-gray-700 text-sm font-bold"
-            >
-              x
-            </button>
-          </div>
+        <div className="fixed top-4 right-4 z-[70] bg-white border border-green-200 shadow-2xl rounded-2xl p-4 border-l-4 border-l-green-500 animate-in slide-in-from-right duration-300">
+          <p className="text-xs font-bold text-green-700 uppercase">Success</p>
+          <p className="text-sm font-semibold text-gray-800">{paymentToast.message}</p>
         </div>
       )}
       
-      <nav className="bg-white/80 backdrop-blur-xl border-b border-gray-200 px-4 sm:px-8 py-4 flex justify-between items-center sticky top-0 z-40 transition-all shadow-sm">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <h1 className="text-xl sm:text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-800 tracking-tighter">PARKEASY</h1>
-        </div>
-        <div className="flex items-center gap-3 sm:gap-6">
-          <span className="text-gray-600 font-medium hidden md:inline-block">Welcome back, <span className="font-bold text-gray-900">{userName}</span></span>
-          <button onClick={() => { localStorage.clear(); router.push('/login'); }} className="text-xs sm:text-sm font-bold text-red-500 hover:text-white hover:bg-red-500 px-4 sm:px-5 py-2 sm:py-2.5 rounded-xl transition-all border border-red-500/20 hover:border-red-500 hover:shadow-lg hover:shadow-red-500/20">
-            Logout
-          </button>
+      <nav className="bg-white/80 backdrop-blur-xl border-b border-gray-200 px-6 py-4 flex justify-between items-center sticky top-0 z-40 shadow-sm">
+        <h1 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-blue-800 tracking-tighter">PARKEASY</h1>
+        <div className="flex items-center gap-4">
+          <span className="hidden md:inline font-medium text-gray-600">Welcome, <span className="text-gray-900 font-bold">{userName}</span></span>
+          <button onClick={() => { localStorage.clear(); router.push('/login'); }} className="text-xs font-bold text-red-500 hover:bg-red-500 hover:text-white border border-red-500 px-4 py-2 rounded-xl transition-all">Logout</button>
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto p-4 sm:p-8 relative z-10">
+      <main className="max-w-7xl mx-auto p-6 relative z-10">
         {feedback.open && (
-          <div className={`mb-6 sm:mb-8 rounded-2xl border px-4 sm:px-5 py-3 sm:py-4 text-sm sm:text-base font-semibold ${
-            feedback.type === 'success'
-              ? 'bg-green-50 border-green-200 text-green-800'
-              : feedback.type === 'error'
-              ? 'bg-red-50 border-red-200 text-red-700'
-              : 'bg-blue-50 border-blue-200 text-blue-800'
-          }`}>
-            <div className="flex items-start justify-between gap-4">
-              <p>{feedback.message}</p>
-              <button
-                onClick={() => setFeedback((prev) => ({ ...prev, open: false }))}
-                className="text-xs sm:text-sm font-bold px-2 py-1 rounded-lg bg-white/70 border border-current/20 hover:bg-white"
-              >
-                Close
-              </button>
-            </div>
+          <div className="mb-6 rounded-2xl bg-blue-50 border border-blue-200 p-4 text-blue-800 font-bold flex justify-between">
+            {feedback.message}
+            <button onClick={() => setFeedback({ ...feedback, open: false })}>✕</button>
           </div>
         )}
 
-        {/* Active Bookings Section */}
+        {/* Active Bookings */}
         {bookings.length > 0 && (
-          <section className="mb-10 sm:mb-14">
-            <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-              <span className="w-2 h-6 bg-blue-500 rounded-full inline-block"></span>
-              My Active Sessions
-            </h2>
+          <section className="mb-12">
+            <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><span className="w-1.5 h-6 bg-blue-600 rounded-full"></span> Active Sessions</h2>
             <div className="grid gap-6">
               {bookings.map((booking) => (
-                <div key={booking.reserve_id} className="bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-3xl sm:rounded-[2rem] p-6 sm:p-8 flex flex-col md:flex-row justify-between items-start md:items-center relative overflow-hidden group shadow-xl shadow-blue-900/10 border border-blue-500/30">
-                  <div className="absolute top-0 right-0 w-48 sm:w-64 h-48 sm:h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 group-hover:scale-110 transition-transform duration-700"></div>
-                  <div className="relative z-10 mb-6 md:mb-0 w-full md:w-auto">
-                    <p className="text-blue-200 font-medium uppercase tracking-wider text-xs sm:text-sm mb-1 mt-0">Current Parking</p>
-                    <h3 className="text-3xl sm:text-4xl font-extrabold mb-3 text-white">Spot #{booking.spot_id}</h3>
-                    <div className="inline-flex items-center gap-2 bg-black/20 backdrop-blur-md px-4 py-2 rounded-lg border border-white/10 text-xs sm:text-sm font-medium text-white/90">
-                      <span>Vehicle:</span> <span className="font-mono tracking-widest text-white">{booking.vehicle_num}</span>
-                    </div>
+                <div key={booking.reserve_id} className="bg-gradient-to-br from-blue-600 to-blue-800 text-white rounded-[2rem] p-8 flex flex-col md:flex-row justify-between items-center shadow-xl">
+                  <div>
+                    <p className="text-blue-200 text-xs font-bold uppercase tracking-widest">Vehicle: {booking.vehicle_num}</p>
+                    <h3 className="text-4xl font-black mt-1">Spot #{booking.spot_id}</h3>
                   </div>
-                  <button onClick={() => handleCheckout(booking.reserve_id)} className="relative z-10 w-full md:w-auto bg-white text-blue-700 px-6 sm:px-10 py-3 sm:py-4 rounded-xl font-bold text-base sm:text-lg hover:shadow-lg hover:shadow-blue-900/20 hover:-translate-y-1 transition-all active:scale-95 text-center border-none">
-                    Checkout & Pay
-                  </button>
+                  <button onClick={() => handleCheckout(booking.reserve_id)} className="mt-4 md:mt-0 bg-white text-blue-700 px-10 py-4 rounded-2xl font-black hover:scale-105 transition-transform">CHECKOUT & PAY</button>
                 </div>
               ))}
             </div>
@@ -263,147 +260,140 @@ export default function UserDashboard() {
         )}
 
         {/* Search & Filter */}
-        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 mb-8 sm:mb-10 bg-white/80 backdrop-blur-md p-3 rounded-2xl border border-gray-200 sticky top-[70px] sm:top-[80px] z-30 shadow-sm">
-          <div className="relative flex-grow">
-            <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-              <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
-            </div>
-            <input type="text" placeholder="Search by location or pincode..." className="w-full pl-12 pr-4 py-3 sm:py-3.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-gray-900 placeholder-gray-500 font-medium transition-all text-sm sm:text-base focus:bg-white" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-          </div>
-          <div className="flex items-center bg-gray-50 px-4 sm:px-5 py-3 sm:py-3.5 rounded-xl border border-gray-200 hover:bg-gray-100 transition-colors cursor-pointer">
-            <input type="checkbox" id="shaded-toggle-user" className="w-4 h-4 sm:w-5 sm:h-5 rounded border-gray-300 bg-white text-blue-600 focus:ring-blue-500 cursor-pointer" checked={showShadedOnly} onChange={(e) => setShowShadedOnly(e.target.checked)} />
-            <label htmlFor="shaded-toggle-user" className="ml-2 sm:ml-3 text-xs sm:text-sm font-bold text-gray-700 cursor-pointer whitespace-nowrap">Indoor / Shaded</label>
+        <div className="flex flex-col sm:flex-row gap-4 mb-10 bg-white p-4 rounded-[2rem] border border-gray-200 shadow-sm">
+          <input type="text" placeholder="Find a location..." className="flex-grow px-6 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          <div className="flex items-center px-6 py-4 bg-gray-50 rounded-2xl border border-gray-100">
+            <input type="checkbox" id="shaded-only" checked={showShadedOnly} onChange={(e) => setShowShadedOnly(e.target.checked)} className="w-5 h-5 accent-blue-600" />
+            <label htmlFor="shaded-only" className="ml-3 font-bold text-gray-700 cursor-pointer text-sm">Shaded Slots</label>
           </div>
         </div>
 
-        {/* Lots Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 sm:gap-8">
+        {/* Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
           {filteredLots.map((lot) => (
-            <div key={lot.lot_id} className="group bg-white rounded-3xl sm:rounded-[2rem] p-5 sm:p-6 border border-gray-200 hover:shadow-xl hover:shadow-blue-900/5 hover:-translate-y-1 hover:border-blue-300 transition-all duration-300 flex flex-col justify-between cursor-pointer">
+            <div key={lot.lot_id} className="bg-white rounded-[2.5rem] p-8 border border-gray-100 hover:border-blue-300 transition-all group flex flex-col justify-between shadow-sm hover:shadow-xl">
               <div>
-                <div className="flex justify-between items-start mb-4">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-blue-50 text-blue-600 rounded-xl sm:rounded-2xl flex items-center justify-center mb-0 group-hover:bg-blue-100 group-hover:scale-110 transition-all border border-blue-100">
-                     <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
-                  </div>
-                  <span className={`text-[8px] sm:text-[10px] px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-black tracking-wider border ${lot.is_shaded ? 'bg-green-50 text-green-700 border-green-200' : 'bg-gray-50 text-gray-500 border-gray-200'}`}>
-                    {lot.is_shaded ? 'SHADED' : 'OPEN'}
-                  </span>
-                </div>
-                <h3 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-tight mb-1">{lot.prime_loc}</h3>
-                <p className="text-gray-500 text-xs sm:text-sm mb-6 line-clamp-2 leading-relaxed">{lot.address}</p>
+                <span className={`text-[10px] font-black px-3 py-1 rounded-lg ${lot.is_shaded ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
+                  {lot.is_shaded ? 'SHADED' : 'OPEN'}
+                </span>
+                <h3 className="text-2xl font-black text-gray-900 mt-4">{lot.prime_loc}</h3>
+                <p className="text-gray-500 text-sm mt-1 mb-6 leading-relaxed">{lot.address}</p>
               </div>
-              <div className="flex justify-between items-center pt-4 border-t border-gray-100">
-                <div>
-                  <p className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-0.5 mt-0">Rate</p>
-                  <p className="font-extrabold text-lg sm:text-xl text-gray-900">₹{lot.price_per_hr}<span className="text-xs sm:text-sm font-medium text-gray-500">/hr</span></p>
-                </div>
-                <button
-                  onClick={() => openBookingModal(lot)}
-                  className="bg-white border border-gray-200 group-hover:bg-blue-600 group-hover:border-blue-600 group-hover:text-white text-gray-700 px-4 sm:px-6 py-2 sm:py-2.5 rounded-xl font-bold transition-all text-sm sm:text-base group-hover:shadow-[0_4px_14px_0_rgba(37,99,235,0.39)]"
-                >
-                  Select Spot
-                </button>
+              <div className="flex justify-between items-center border-t pt-6">
+                <p className="text-2xl font-black">₹{lot.price_per_hr}<span className="text-sm font-medium text-gray-400">/hr</span></p>
+                <button onClick={() => openBookingModal(lot)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200">Select Spot</button>
               </div>
             </div>
           ))}
         </div>
       </main>
 
-      {/* --- SPOT SELECTION MODAL --- */}
+      {/* --- MODAL (SPOT SELECTION + QR SUCCESS) --- */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 transition-all">
-          <div className="bg-white rounded-3xl sm:rounded-[2rem] p-5 sm:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-start sm:items-center mb-6 sm:mb-8 border-b border-gray-100 pb-4">
-              <div>
-                <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900">Select Spot</h2>
-                <p className="text-gray-500 text-xs sm:text-sm mt-1">{selectedLot?.prime_loc}</p>
-              </div>
-              <button onClick={(e) => { e.stopPropagation(); setIsModalOpen(false); }} className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gray-50 hover:bg-gray-100 text-gray-500 hover:text-gray-900 flex items-center justify-center transition-colors border border-gray-200">
-                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-              </button>
-            </div>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] p-8 sm:p-12 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative border border-white/20">
+            
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-8 right-8 text-gray-400 hover:text-red-500 transition-colors">
+              <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
 
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3 sm:gap-4">
-              {lotSpots.map((spot,index) => (
-                <button
-                  key={spot.spot_id}
-                  disabled={spot.status === 'o'}
-                  onClick={() => openVehicleModal(spot.spot_id)}
-                  className={`aspect-square rounded-xl sm:rounded-2xl flex flex-col items-center justify-center border transition-all transform active:scale-95 group ${
-                    spot.status === 'a' 
-                    ? 'border-green-200 bg-green-50/50 hover:bg-green-500 hover:border-green-600 hover:text-white hover:shadow-[0_4px_14px_0_rgba(34,197,94,0.39)] cursor-pointer' 
-                    : 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed opacity-60'
-                  }`}
+            {bookingSuccess ? (
+              <div className="flex flex-col items-center justify-between h-full max-h-[75vh] sm:max-h-[85vh] animate-in zoom-in duration-300">
+                
+                {/* Header Section - Reduced margins for laptop */}
+                <div className="text-center">
+                  <div className="w-12 h-12 sm:w-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto mb-2">
+                    <svg className="w-6 h-6 sm:w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                  </div>
+                  <h2 className="text-xl sm:text-3xl font-black text-gray-900 leading-tight">Booking Confirmed!</h2>
+                  <p className="text-gray-500 text-[11px] sm:text-sm font-medium">Scan at entry gate</p>
+                </div>
+
+                {/* QR Container - Shrinks on smaller laptop screens */}
+                <div 
+                  ref={qrRef} 
+                  className="bg-white p-3 sm:p-6 rounded-[1.5rem] border-2 border-dashed border-blue-100 shadow-sm my-3 sm:my-6 flex items-center justify-center"
                 >
-                  <span className={`text-xs sm:text-sm font-black mb-1 mt-0 transition-colors ${spot.status === 'a' ? 'text-gray-700 group-hover:text-white' : 'text-gray-400'}`}>P-{index+1}</span>
-                  <span className={`text-[8px] sm:text-[9px] uppercase font-bold px-1.5 sm:px-2 py-0.5 rounded-full mt-0 ${spot.status === 'a' ? 'bg-green-100 text-green-700 group-hover:bg-white/20 group-hover:text-white' : 'bg-gray-200 text-gray-500'}`}>
-                    {spot.status === 'a' ? 'Free' : 'Used'}
-                  </span>
-                </button>
-              ))}
-            </div>
+                  <div className="block lg:hidden"> {/* Smaller for tablets/laptops */}
+                    <QRCodeSVG value={qrData} size={140} level="H" includeMargin={true} />
+                  </div>
+                  <div className="hidden lg:block"> {/* Larger for big monitors */}
+                    <QRCodeSVG value={qrData} size={180} level="H" includeMargin={true} />
+                  </div>
+                </div>
 
-            <div className="mt-6 sm:mt-8 pt-4 sm:pt-6 border-t border-gray-100 flex justify-center gap-6 sm:gap-8 text-xs sm:text-sm font-medium text-gray-600">
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-3 h-3 sm:w-4 sm:h-4 bg-green-50 border border-green-200 rounded-md"></div> Available
+                {/* Action Section - Compact buttons */}
+                <div className="w-full flex flex-col gap-2">
+                  <button 
+                    onClick={downloadTicket} 
+                    className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold text-sm hover:bg-blue-700 shadow-lg shadow-blue-100 flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                    </svg>
+                    Download Ticket
+                  </button>
+                  
+                  <button 
+                    onClick={() => setIsModalOpen(false)} 
+                    className="w-full py-2 text-gray-400 font-bold hover:text-gray-600 text-xs uppercase tracking-widest"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+
+                {/* Small Footer Tip */}
+                <p className="mt-2 text-[9px] font-black uppercase tracking-widest text-blue-400 opacity-50">
+                  ParkEasy Pune Digital Pass
+                </p>
               </div>
-              <div className="flex items-center gap-2 sm:gap-3">
-                <div className="w-3 h-3 sm:w-4 sm:h-4 bg-gray-50 border border-gray-200 rounded-md"></div> Occupied
-              </div>
-            </div>
+            ) : (
+              <>
+                <h2 className="text-3xl font-black text-gray-900 mb-2">Pick a Spot</h2>
+                <p className="text-gray-500 font-medium mb-10">{selectedLot?.prime_loc}</p>
+                <div className="grid grid-cols-4 sm:grid-cols-5 gap-4">
+                  {lotSpots.map((spot, index) => (
+                    <button
+                      key={spot.spot_id}
+                      disabled={spot.status === 'o'}
+                      onClick={() => openVehicleModal(spot.spot_id)}
+                      className={`aspect-square rounded-2xl flex flex-col items-center justify-center border-2 transition-all active:scale-90 ${
+                        spot.status === 'a' 
+                        ? 'border-green-100 bg-green-50 text-green-700 hover:border-green-500 hover:bg-green-500 hover:text-white' 
+                        : 'border-gray-100 bg-gray-50 text-gray-300'
+                      }`}
+                    >
+                      <span className="text-sm font-black">P-{index + 1}</span>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
 
+      {/* Vehicle Input Modal */}
       {showVehicleModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[60] flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-3xl sm:rounded-[2rem] p-5 sm:p-8 max-w-md w-full shadow-2xl border border-gray-100">
-            <div className="flex justify-between items-start mb-5 border-b border-gray-100 pb-4">
-              <div>
-                <h2 className="text-xl sm:text-2xl font-extrabold text-gray-900">Confirm Vehicle</h2>
-                <p className="text-gray-500 text-xs sm:text-sm mt-1">Enter vehicle number to continue booking.</p>
-              </div>
-              <button
-                onClick={() => { setShowVehicleModal(false); setVehicleError(''); }}
-                className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gray-50 hover:bg-gray-100 text-gray-500 hover:text-gray-900 flex items-center justify-center transition-colors border border-gray-200"
-              >
-                <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-              </button>
-            </div>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] p-10 max-w-md w-full shadow-2xl border border-gray-100">
+            <h2 className="text-3xl font-black text-gray-900 mb-2">Verification</h2>
+            <p className="text-gray-500 mb-8 font-medium">Enter your vehicle plate number.</p>
 
-            <label htmlFor="vehicle-num" className="block text-xs sm:text-sm font-bold text-gray-700 mb-2">
-              Vehicle Number
-            </label>
             <input
-              id="vehicle-num"
               type="text"
               value={vehicleNumInput}
-              onChange={(e) => {
-                setVehicleNumInput(e.target.value.toUpperCase());
-                if (vehicleError) setVehicleError('');
-              }}
-              placeholder="e.g., MH12AB1234"
-              className={`w-full px-4 py-3 bg-gray-50 border rounded-xl outline-none focus:ring-1 text-sm sm:text-base font-semibold tracking-wide ${
-                vehicleError
-                  ? 'border-red-300 focus:border-red-500 focus:ring-red-500'
-                  : 'border-gray-200 focus:border-blue-500 focus:ring-blue-500'
-              }`}
+              onChange={(e) => setVehicleNumInput(e.target.value.toUpperCase())}
+              placeholder="e.g. MH12AB1234"
+              className={`w-full px-6 py-5 bg-gray-50 border-2 rounded-2xl outline-none focus:border-blue-500 text-xl font-black tracking-widest ${vehicleError ? 'border-red-300' : 'border-gray-100'}`}
             />
-            {vehicleError && <p className="mt-2 text-xs sm:text-sm font-medium text-red-600">{vehicleError}</p>}
+            {vehicleError && <p className="mt-3 text-sm font-bold text-red-500">{vehicleError}</p>}
 
-            <div className="mt-5 flex gap-3">
-              <button
-                onClick={() => { setShowVehicleModal(false); setVehicleError(''); }}
-                className="w-full bg-white border border-gray-200 text-gray-700 px-4 py-2.5 rounded-xl font-bold transition-all hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleFinalBooking}
-                className="w-full bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold transition-all hover:bg-blue-700"
-              >
-                Confirm Booking
-              </button>
+            <div className="mt-10 flex gap-4">
+              <button onClick={() => setShowVehicleModal(false)} className="flex-1 py-4 font-bold text-gray-400">Cancel</button>
+              <button onClick={handleFinalBooking} className="flex-[2] bg-blue-600 text-white py-5 rounded-2xl font-black shadow-lg hover:bg-blue-700">Book Spot</button>
             </div>
           </div>
         </div>
